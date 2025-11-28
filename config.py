@@ -13,7 +13,7 @@ from utils import log_exception
 # Константы и настройки по умолчанию
 # ---------------------------------------------------------------------------
 
-APP_NAME = "Крестики-нолики — Вариант A"
+APP_NAME = "Крестики-нолики"
 DEFAULT_WINDOW_WIDTH = 640
 DEFAULT_WINDOW_HEIGHT = 640
 MIN_WINDOW_SIZE = 300
