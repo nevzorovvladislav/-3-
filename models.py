@@ -1,84 +1,117 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Модели данных приложения.
+Модели данных: игровая логика и состояние
 """
 
-from dataclasses import dataclass, asdict
-import json
-from pathlib import Path
-from typing import List, Optional, Tuple
-from config import SETTINGS_FILE, SCORE_FILE, DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT
-from utils import log_exception
+from typing import List, Optional, Tuple, Dict
+from config import Settings, Score
 
+# Загружаем настройки и счет при старте
+settings = Settings.load()
+score = Score.load()
 
-@dataclass
-class Settings:
-    """Класс для хранения настроек приложения."""
-    width: int = DEFAULT_WINDOW_WIDTH
-    height: int = DEFAULT_WINDOW_HEIGHT
-    theme: str = "Classic"
-    show_highlight: bool = True
-    autosave_score: bool = True
+class Game:
+    """
+    Класс, инкапсулирующий логику игры.
+    Поле 3x3 хранится в self.board: список списков со значениями '', 'X', 'O'.
+    """
 
-    @classmethod
-    def load(cls) -> "Settings":
-        """Загрузить настройки из файла."""
-        if SETTINGS_FILE.exists():
-            try:
-                data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-                return cls(
-                    width=int(data.get("width", DEFAULT_WINDOW_WIDTH)),
-                    height=int(data.get("height", DEFAULT_WINDOW_HEIGHT)),
-                    theme=str(data.get("theme", "Classic")),
-                    show_highlight=bool(data.get("show_highlight", True)),
-                    autosave_score=bool(data.get("autosave_score", True)),
-                )
-            except Exception as e:
-                log_exception(e)
-        return cls()
+    def __init__(self):
+        self.reset()
 
-    def save(self) -> None:
-        """Сохранить настройки в файл."""
-        try:
-            SETTINGS_FILE.write_text(
-                json.dumps(asdict(self), ensure_ascii=False, indent=2),
-                encoding="utf-8"
-            )
-        except Exception as e:
-            log_exception(e)
+    def reset(self, starting: str = "X") -> None:
+        """Сброс состояния игры."""
+        self.board: List[List[str]] = [["" for _ in range(3)] for _ in range(3)]
+        self.current: str = starting  # 'X' или 'O'
+        self.winner: Optional[str] = None  # 'X', 'O', 'Draw' или None
+        self.move_count: int = 0
+        self.history: List[Tuple[int, int, str]] = []  # (row, col, player)
 
+    def make_move(self, r: int, c: int) -> bool:
+        """
+        Сделать ход. Возвращает True, если ход успешен.
+        Валидация: проверяем границы, пустоту клетки и отсутствие победителя.
+        """
+        if self.winner:
+            return False
+        if not (0 <= r < 3 and 0 <= c < 3):
+            raise ValueError("row/col out of range")
+        if self.board[r][c] != "":
+            return False
 
-@dataclass
-class Score:
-    """Хранение счета игроков и ничьих."""
-    x_wins: int = 0
-    o_wins: int = 0
-    draws: int = 0
+        self.board[r][c] = self.current
+        self.history.append((r, c, self.current))
+        self.move_count += 1
 
-    @classmethod
-    def load(cls) -> "Score":
-        """Загрузить счет из файла."""
-        if SCORE_FILE.exists():
-            try:
-                data = json.loads(SCORE_FILE.read_text(encoding="utf-8"))
-                return cls(
-                    x_wins=int(data.get("x_wins", 0)),
-                    o_wins=int(data.get("o_wins", 0)),
-                    draws=int(data.get("draws", 0)),
-                )
-            except Exception as e:
-                log_exception(e)
-        return cls()
+        if self._check_winner_after_move(r, c):
+            self.winner = self.current
+        else:
+            if self.move_count == 9:
+                self.winner = "Draw"
+            else:
+                self.current = "O" if self.current == "X" else "X"
+        return True
 
-    def save(self, autosave: bool = True) -> None:
-        """Сохранить счет в файл."""
-        if not autosave:
-            return
-        try:
-            SCORE_FILE.write_text(
-                json.dumps(asdict(self), ensure_ascii=False, indent=2),
-                encoding="utf-8"
-            )
-        except Exception as e:
-            log_exception(e)
+    def undo(self) -> bool:
+        """Отмена последнего хода. Возвращает True, если отмена выполнена."""
+        if not self.history or self.winner is not None and self.winner != "Draw":
+            # Разрешаем отменять даже после ничьи; если есть победитель, позволим откат
+            # но в этом варианте, отмена разрешена всегда при наличии истории.
+            pass
+        if not self.history:
+            return False
+        r, c, player = self.history.pop()
+        # Сброс клетки
+        self.board[r][c] = ""
+        self.move_count -= 1
+        # Восстанавливаем текущего игрока
+        self.current = player
+        # Сбрасываем победителя (в случае отката после победы)
+        self.winner = None
+        return True
+
+    def _check_winner_after_move(self, last_r: int, last_c: int) -> bool:
+        p = self.board[last_r][last_c]
+        # Проверка строки
+        if all(self.board[last_r][c] == p for c in range(3)):
+            return True
+        # Проверка столбца
+        if all(self.board[r][last_c] == p for r in range(3)):
+            return True
+        # Главная диагональ
+        if last_r == last_c and all(self.board[i][i] == p for i in range(3)):
+            return True
+        # Вторая диагональ
+        if last_r + last_c == 2 and all(self.board[i][2 - i] == p for i in range(3)):
+            return True
+        return False
+
+    def get_winning_line(self) -> Optional[List[Tuple[int, int]]]:
+        """
+        Вернуть координаты выигрышной линии, если она есть.
+        Нужна для подсветки в UI.
+        """
+        # Проверяем все возможные линии
+        b = self.board
+        lines = []
+        # строки
+        for r in range(3):
+            lines.append([(r, 0), (r, 1), (r, 2)])
+        # столбцы
+        for c in range(3):
+            lines.append([(0, c), (1, c), (2, c)])
+        # диагонали
+        lines.append([(0, 0), (1, 1), (2, 2)])
+        lines.append([(0, 2), (1, 1), (2, 0)])
+
+        for line in lines:
+            a, b1, c1 = line
+            v0 = self.board[a[0]][a[1]]
+            if v0 != "" and self.board[b1[0]][b1[1]] == v0 and self.board[c1[0]][c1[1]] == v0:
+                return line
+        return None
+
+    def get_state_copy(self) -> List[List[str]]:
+        """Возвращает копию доски (для безопасного чтения из UI)."""
+        return [row[:] for row in self.board]
