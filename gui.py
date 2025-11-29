@@ -10,6 +10,7 @@ from typing import Optional, Tuple, List, Dict, Callable
 import traceback
 import sys
 import time
+import json  # Добавлен недостающий импорт
 
 from config import APP_NAME, MIN_WINDOW_SIZE, THEMES, KEY_TO_CELL
 from models import Game, settings, score
